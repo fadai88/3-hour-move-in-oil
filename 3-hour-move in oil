@@ -1,0 +1,114 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+data = pd.read_excel("UKOIL_H1.xlsx")
+
+# plt.plot(data['close'], label='close')
+# plt.plot(data['EMA100'], label='ema100')
+
+def n_day_move(df):
+    df['ema100'] = df['close'].ewm(span=100, adjust=False).mean()
+    atr_multiplier = 2
+    initial_capital = 100000
+    signals = pd.DataFrame(index=df.index)
+    signals['action'] = ''
+    signals['entry'] = 0.0
+    signals['stop_loss'] = 0.0
+    signals['take_profit'] = 0.0
+    signals['position'] = 0
+    signals['p&l'] = 0.0
+    signals['result'] = ''
+    for i in range(14, len(df)):
+        if df['close'][i-1] > df['close'][i-2] > df['close'][i-3] > df['close'][i-4] and signals['position'][i-1] == 0:
+            signals['position'][i] = 1
+            signals['action'][i] = 'buy'
+            long_entry = signals['entry'][i] = df['open'][i]
+            stop_loss = signals['stop_loss'][i] = long_entry - df["ATR"][i-1]
+            target = signals['take_profit'][i] = long_entry + atr_multiplier * df["ATR"][i-1]
+            for j in range(i, len(df)):
+                if stop_loss >= df['low'][j]:
+                    signals['position'][j+1] = 0
+                    result = stop_loss - long_entry
+                    signals["p&l"][j] = result * 1000
+                    signals['result'][j] = 'long loss'
+                    break
+                elif target <= df['high'][j]:
+                    signals['position'][j+1] = 0
+                    result = target - long_entry
+                    signals["p&l"][j] = result * 1000
+                    signals['result'][j] = 'long win'
+                    break
+                else:
+                    signals['position'][j] = 1
+        elif df['close'][i-1] < df['close'][i-2] < df['close'][i-3] < df['close'][i-4] and signals['position'][i-1] == 0:
+            signals['position'][i] = -1
+            signals['action'][i] = 'sell'
+            short_entry = signals['entry'][i] = df['open'][i]
+            stop_loss = signals['stop_loss'][i] = short_entry + df["ATR"][i-1]
+            target = signals['take_profit'][i] = short_entry - atr_multiplier * df["ATR"][i-1]
+            for j in range(i, len(df)):
+                if stop_loss <= df['high'][j]:
+                    signals['position'][j+1] = 0
+                    result = short_entry - stop_loss
+                    signals["p&l"][j] = result * 1000
+                    signals['result'][j] = 'short loss'
+                    break
+                elif target >= df['low'][j]:
+                    signals['position'][j+1] = 0
+                    result = short_entry - target
+                    signals["p&l"][j] = result * 1000
+                    signals['result'][j] = 'short win'
+                    break
+                else:
+                    signals['position'][j] = -1
+    return signals
+
+df = n_day_move(data)
+df.index = data['Date']
+# df.to_excel('ukoil2.xlsx')
+
+def total_pnl(df):
+    ts = df['p&l']
+    df['total'] = 0.0
+    initial_capital = 100000
+    df['total'][0] = initial_capital
+    ts[0] = initial_capital
+    for i in range(1, len(ts)):
+        df['total'][i] = df['total'][i-1] + ts[i]
+    return df['total']
+ts = total_pnl(df)
+ts.plot()
+
+"""
+Let's calculate basic metrics, such as profit, annual return and hit ratio.
+"""
+initial_capital = 100000
+print("total P&L over 11 years was " + str(sum(df['p&l'])))
+# the data spans 11 years, from 2012 January to 2023 January. To calculate annual return we should take (1/11)th root of the total.
+annual_return = (df['total'][len(df)-1] / initial_capital) ** (1/11) - 1
+print("annual return is " + str("{:.2%}".format(annual_return)))
+gains = len(df[df['p&l'] > 0])
+losses = len(df[df['p&l'] < 0])
+win_rate = gains / (gains + losses)
+print("win rate is " "{:.2%}".format(win_rate))
+
+
+# maximum drawdown - how many trades in a row the strategy lost and how much money
+def maximum_drawdown(df):
+    drawdown = []
+    max_dd = []
+    dd_len = 0
+    max_dd_amount = 0.0
+    for i in range(len(df)):
+        if df['p&l'][i] < 0:
+            drawdown.append(df['p&l'][i])
+        elif df['p&l'][i] > 0:
+            max_dd.append(drawdown)
+            drawdown = []
+    for i in max_dd:
+        if len(i) >= dd_len:
+            dd_len = len(i)
+            max_dd_amount = min(sum(i), max_dd_amount)
+            longest_dd = i
+    return (len(longest_dd), max_dd_amount)
+maximum_drawdown(df)
